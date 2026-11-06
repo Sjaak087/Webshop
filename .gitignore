@@ -1,6 +1,1 @@
 node_modules/
-dist/
-.firebase/
-.env
-functions/node_modules/
-functions/admin-config.js

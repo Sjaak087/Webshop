@@ -1,229 +1,32 @@
 import "./style.css";
-import { auth, db } from "./firebase.js";
-import {
-  createUserWithEmailAndPassword, signInWithEmailAndPassword,
-  signOut, onAuthStateChanged, sendEmailVerification, reload
-} from "firebase/auth";
-import {
-  ref, onValue, push, set, remove, query, orderByChild
-} from "firebase/database";
-import { getFunctions, httpsCallable } from "firebase/functions";
-
-const functions = getFunctions(undefined, "europe-west1");
-const bootstrapAdmin = httpsCallable(functions, "bootstrapAdmin");
+import { API_URL } from "./firebase.js";
 const appRoot = document.querySelector("#app");
-
-let currentUser = null;
-let products = [];
-let cart = [];
-let adminMode = false;
-let stopProducts = null;
-let activeCategory = "Alles";
-
-const money = (n) => new Intl.NumberFormat("nl-NL", { style: "currency", currency: "EUR" }).format(Number(n || 0));
-const safe = (s = "") => String(s).replace(/[&<>"']/g, c => ({ "&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;" }[c]));
-const categories = () => ["Alles", ...new Set(products.map(p => p.category).filter(Boolean))];
-
-function header() {
-  return `
-    <header class="topbar">
-      <a class="brand" href="#" aria-label="Webshop home"><span class="brand-mark">w</span> webshop</a>
-      <label class="search"><span>⌕</span><input id="search" placeholder="Waar ben je naar op zoek?" /></label>
-      <nav>
-        ${currentUser ? `<span class="user-label">${safe(currentUser.email)}</span><button class="nav-button" id="admin-toggle">Sitebeheer</button><button class="nav-button" id="logout">Uitloggen</button>` : `<button class="nav-button" id="account-open">Inloggen</button>`}
-        <button class="cart-button" id="cart-open">Winkelwagen <b>${cart.length}</b></button>
-      </nav>
-    </header>`;
+let products = [], cart = [], user = null, token = localStorage.getItem("shop_session") || "", activeCategory = "Alles", searchTerm = "";
+const money = n => new Intl.NumberFormat("nl-NL", { style:"currency", currency:"EUR" }).format(Number(n || 0));
+const safe = (s="") => String(s).replace(/[&<>"']/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
+async function api(path, options={}) {
+  const response = await fetch(`${API_URL}${path}`, { method: options.method || "GET", headers: { "Content-Type":"application/json", ...(token ? { Authorization:`Bearer ${token}` } : {}) }, ...(options.body ? { body:JSON.stringify(options.body) } : {}) });
+  const data = await response.json().catch(() => ({})); if (!response.ok) throw new Error(data.error || "De aanvraag is niet gelukt."); return data;
 }
-
-function render() {
-  if (!currentUser) {
-    appRoot.innerHTML = `${header()}
-      <main class="gate">
-        <section class="gate-card">
-          <p class="eyebrow">WELKOM IN ONZE WEBSHOP</p>
-          <h1>Maak eerst een account aan</h1>
-          <p>Om producten te bekijken en de winkelwagen te gebruiken, log je in of registreer je met je e-mailadres en wachtwoord.</p>
-          <button class="primary" id="gate-account">Inloggen of account aanmaken</button>
-        </section>
-      </main>
-      <footer><span>webshop</span><span>Een onafhankelijke demo-webshop</span></footer>
-      <div id="modal-root"></div>`;
-    bindMain();
-    document.querySelector("#gate-account").onclick = accountModal;
-    return;
-  }
-  const visible = products.filter(p =>
-    (activeCategory === "Alles" || p.category === activeCategory) &&
-    (`${p.name} ${p.description} ${p.category}`.toLowerCase().includes((document.querySelector("#search")?.value || "").toLowerCase()))
-  );
-  appRoot.innerHTML = `${header()}
-    <main>
-      <section class="hero">
-        <div><p class="eyebrow">ONTDEK ONZE COLLECTIE</p><h1>Alles wat je zoekt.<br><span>Gewoon online.</span></h1><p>Bekijk het aanbod en vind jouw volgende favoriet.</p><a href="#producten" class="hero-link">Bekijk producten ↓</a></div>
-        <div class="hero-art"><div class="art-circle"></div><div class="art-card">★<br><small>Jouw favorieten<br>op één plek</small></div></div>
-      </section>
-      <section id="producten" class="products-section">
-        <div class="section-heading"><div><p class="eyebrow">ONS AANBOD</p><h2>Populaire producten</h2></div><span class="muted">${visible.length} producten</span></div>
-        <div class="categories">${categories().map(c => `<button class="chip ${activeCategory === c ? "selected" : ""}" data-category="${safe(c)}">${safe(c)}</button>`).join("")}</div>
-        <div class="product-grid">${visible.length ? visible.map(productCard).join("") : `<div class="empty">Er staan nog geen producten in deze categorie.</div>`}</div>
-      </section>
-    </main>
-    <footer><span>webshop</span><span>Een onafhankelijke demo-webshop</span></footer>
-    <div id="modal-root"></div>`;
-  bindMain();
+const categories = () => ["Alles", ...new Set(products.map(p=>p.category).filter(Boolean))];
+async function loadProducts() { try { products = (await api("/products")).products || []; render(); } catch(e) { render(e.message); } }
+function header() { return `<header class="topbar"><a class="brand" href="#"><span class="brand-mark">N</span><span>NOIR<span class="brand-dot">.</span></span></a><label class="search"><span>⌕</span><input id="search" value="${safe(searchTerm)}" placeholder="Zoek in de collectie..."></label><nav>${user ? `<span class="user-label">${safe(user.email || user.username)}</span>${user.role === "admin" ? `<button class="nav-button" id="admin-toggle">Sitebeheer</button>` : ""}<button class="nav-button" id="logout">Uitloggen</button>` : `<button class="nav-button" id="account-open">Inloggen</button>`}<button class="cart-button" id="cart-open"><span>Winkelwagen</span><b>${cart.length}</b></button></nav></header>`; }
+function render(error="") {
+  const visible = products.filter(p => (activeCategory === "Alles" || p.category === activeCategory) && `${p.name} ${p.description||""} ${p.category}`.toLowerCase().includes(searchTerm.toLowerCase()));
+  appRoot.innerHTML = `${header()}<main><section class="hero"><div class="hero-copy"><p class="eyebrow">THE NEW STANDARD</p><h1>Less ordinary.<br><span>More you.</span></h1><p class="hero-desc">Ontdek een zorgvuldig geselecteerde collectie. Tijdloos design, bijzondere details en kwaliteit die je ziet.</p><a class="hero-link" href="#producten">ONTDEK DE COLLECTIE <span>↘</span></a></div><div class="hero-visual"><div class="visual-ring"></div><div class="visual-panel"><span>NOIR / COLLECTION</span><strong>01</strong><small>SELECTED<br>FOR YOU</small></div><div class="visual-caption">CURATED OBJECTS · EST. 2026</div></div><div class="hero-index">01 — 04</div></section><section class="benefits"><div><span>01</span><b>Met zorg geselecteerd</b><small>Alleen producten waar we achter staan.</small></div><div><span>02</span><b>Veilig account</b><small>Je eigen account en persoonlijke toegang.</small></div><div><span>03</span><b>Persoonlijke service</b><small>Een collectie met aandacht samengesteld.</small></div></section><section id="producten" class="products-section"><div class="section-heading"><div><p class="eyebrow">DISCOVER</p><h2>De collectie<span>.</span></h2></div><span class="muted">${visible.length} ${visible.length===1?"product":"producten"}</span></div><div class="categories">${categories().map(c=>`<button class="chip ${activeCategory===c?"selected":""}" data-category="${safe(c)}">${safe(c)}</button>`).join("")}</div>${error?`<p class="error-banner">${safe(error)}</p>`:""}<div class="product-grid">${visible.length?visible.map(productCard).join(""):`<div class="empty"><span>—</span><h3>De collectie wordt samengesteld</h3><p>Er zijn op dit moment geen producten in deze selectie.</p></div>`}</div></section></main><footer><a class="brand" href="#"><span class="brand-mark">N</span><span>NOIR<span class="brand-dot">.</span></span></a><span>© 2026 NOIR. Alle rechten voorbehouden.</span><a href="#producten">TERUG NAAR BOVEN ↑</a></footer><div id="modal-root"></div>`;
+  document.querySelector("#search")?.addEventListener("input", e=>{ searchTerm=e.target.value; const pos=e.target.selectionStart; render(); const el=document.querySelector("#search"); el.focus(); el.setSelectionRange(pos,pos); });
+  document.querySelectorAll("[data-category]").forEach(b=>b.onclick=()=>{activeCategory=b.dataset.category;render();});
+  document.querySelectorAll("[data-add]").forEach(b=>b.onclick=()=>{const p=products.find(x=>x.id===b.dataset.add);if(p){cart.push(p);render();toast("Toegevoegd aan je winkelwagen");}});
+  document.querySelector("#account-open")?.addEventListener("click",accountModal);
+  document.querySelector("#logout")?.addEventListener("click",()=>{token="";user=null;localStorage.removeItem("shop_session");render();toast("Je bent uitgelogd.");});
+  document.querySelector("#admin-toggle")?.addEventListener("click",adminPanel);
+  document.querySelector("#cart-open")?.addEventListener("click",cartModal);
 }
-
-function productCard(p) {
-  return `<article class="product-card">
-    <div class="product-image">${p.image ? `<img src="${safe(p.image)}" alt="${safe(p.name)}" loading="lazy" onerror="this.parentElement.innerHTML='📦'">` : "📦"}
-      ${p.category ? `<span class="product-category">${safe(p.category)}</span>` : ""}
-    </div>
-    <div class="product-info"><h3>${safe(p.name)}</h3><p>${safe(p.description || "Een mooi product uit onze collectie.")}</p>
-      <div class="product-bottom"><strong>${money(p.price)}</strong><button class="add-button" data-add="${safe(p.id)}">＋</button></div></div>
-  </article>`;
-}
-
-function bindMain() {
-  document.querySelector("#search")?.addEventListener("input", () => {
-    const value = document.querySelector("#search").value;
-    render();
-    const search = document.querySelector("#search");
-    search.value = value;
-    search.focus();
-    search.setSelectionRange(value.length, value.length);
-  });
-  document.querySelectorAll("[data-category]").forEach(b => b.onclick = () => { activeCategory = b.dataset.category; render(); });
-  document.querySelectorAll("[data-add]").forEach(b => b.onclick = () => {
-    const p = products.find(x => x.id === b.dataset.add);
-    if (p) { cart.push(p); render(); toast(`${p.name} toegevoegd aan je winkelwagen`); }
-  });
-  document.querySelector("#account-open")?.addEventListener("click", accountModal);
-  document.querySelector("#logout")?.addEventListener("click", () => signOut(auth));
-  document.querySelector("#admin-toggle")?.addEventListener("click", () => { adminMode = !adminMode; adminMode ? adminPanel() : render(); });
-  document.querySelector("#cart-open")?.addEventListener("click", cartModal);
-}
-
-function accountModal() {
-  const root = document.querySelector("#modal-root");
-  root.innerHTML = `<div class="overlay"><section class="modal"><button class="close" id="close">×</button><p class="eyebrow">JOUW ACCOUNT</p><h2>Welkom</h2><p class="muted">Maak een account aan of log in met je e-mailadres en wachtwoord.</p>
-    <form id="auth-form"><label>E-mailadres<input type="email" id="email" required autocomplete="email"></label><label>Wachtwoord<input type="password" id="password" required minlength="6" autocomplete="current-password"></label>
-    <button class="primary full" type="submit" id="login-submit">Inloggen</button><button class="secondary full" type="button" id="signup">Account aanmaken</button><p id="auth-message" class="form-message"></p></form></section></div>`;
-  root.querySelector("#close").onclick = () => root.innerHTML = "";
-  root.querySelector("#auth-form").onsubmit = async e => {
-    e.preventDefault();
-    try {
-      await signInWithEmailAndPassword(auth, root.querySelector("#email").value, root.querySelector("#password").value);
-      root.innerHTML = "";
-    } catch (err) { root.querySelector("#auth-message").textContent = authError(err); }
-  };
-  root.querySelector("#signup").onclick = async () => {
-    try {
-      const credential = await createUserWithEmailAndPassword(auth, root.querySelector("#email").value, root.querySelector("#password").value);
-      await sendEmailVerification(credential.user);
-      root.querySelector("#auth-message").textContent = "Account aangemaakt. Controleer je inbox om je e-mailadres te bevestigen.";
-    } catch (err) { root.querySelector("#auth-message").textContent = authError(err); }
-  };
-}
-
-function adminPanel() {
-  const root = document.querySelector("#modal-root");
-  root.innerHTML = `<div class="overlay"><section class="modal admin-modal"><button class="close" id="close">×</button><p class="eyebrow">SITEBEHEER</p><h2>Producten beheren</h2>
-    ${currentUser && !currentUser.emailVerified ? `<div class="notice">Bevestig eerst je e-mailadres. Ververs daarna je accountstatus door opnieuw in te loggen.</div>` : ""}
-    <div id="admin-content"></div></section></div>`;
-  root.querySelector("#close").onclick = () => { root.innerHTML = ""; adminMode = false; };
-  const content = root.querySelector("#admin-content");
-  if (!currentUser) return;
-  currentUser.getIdTokenResult(true).then(token => {
-    if (token.claims.admin === true) {
-      content.innerHTML = `<form id="product-form" class="product-form">
-        <label>Productnaam<input id="p-name" required maxlength="90"></label>
-        <label>Prijs in euro<input id="p-price" type="number" min="0" step="0.01" required></label>
-        <label>Categorie<input id="p-category" required maxlength="40" placeholder="Bijv. Elektronica"></label>
-        <label>Afbeeldings-URL (optioneel)<input id="p-image" type="url" placeholder="https://..."></label>
-        <label class="wide">Beschrijving<textarea id="p-description" maxlength="500"></textarea></label>
-        <button class="primary wide" type="submit">Product toevoegen</button></form>
-        <h3 class="list-title">Bestaande producten</h3><div class="admin-list">${products.map(p => `<div><span><b>${safe(p.name)}</b><small>${money(p.price)} · ${safe(p.category)}</small></span><button class="delete-button" data-delete="${safe(p.id)}">Verwijderen</button></div>`).join("") || "<p class='muted'>Nog geen producten.</p>"}</div>`;
-      content.querySelector("#product-form").onsubmit = async e => {
-        e.preventDefault();
-        const product = {
-          name: content.querySelector("#p-name").value.trim(),
-          price: Number(content.querySelector("#p-price").value),
-          category: content.querySelector("#p-category").value.trim(),
-          image: content.querySelector("#p-image").value.trim(),
-          description: content.querySelector("#p-description").value.trim(),
-          createdAt: Date.now()
-        };
-        if (!product.name || !Number.isFinite(product.price) || product.price < 0) return;
-        try { await push(ref(db, "products"), product); toast("Product toegevoegd"); adminPanel(); }
-        catch (err) { toast(authError(err)); }
-      };
-      content.querySelectorAll("[data-delete]").forEach(b => b.onclick = async () => {
-        if (confirm("Weet je zeker dat je dit product wilt verwijderen?")) {
-          try { await remove(ref(db, `products/${b.dataset.delete}`)); toast("Product verwijderd"); adminPanel(); }
-          catch (err) { toast(authError(err)); }
-        }
-      });
-    } else {
-      content.innerHTML = `<div class="notice">Er is nog geen sitebeheerder ingesteld, of dit account heeft geen beheerdersrechten.</div>
-        <p>Eenmalige eerste inrichting: maak eerst een account aan en bevestig het e-mailadres. Vul daarna de geheime bootstrap-code in die je bij de Firebase Functions-installatie hebt ingesteld.</p>
-        <form id="bootstrap-form"><label>Eenmalige bootstrap-code<input id="bootstrap-secret" type="password" required autocomplete="off"></label><button class="primary full">Maak mij sitebeheerder</button><p id="bootstrap-message" class="form-message"></p></form>`;
-      content.querySelector("#bootstrap-form").onsubmit = async e => {
-        e.preventDefault();
-        const msg = content.querySelector("#bootstrap-message");
-        try {
-          await reload(currentUser);
-          if (!currentUser.emailVerified) throw new Error("Verifieer eerst je e-mailadres en log opnieuw in.");
-          await bootstrapAdmin({ secret: content.querySelector("#bootstrap-secret").value });
-          await currentUser.getIdToken(true);
-          msg.textContent = "Sitebeheer is geactiveerd. Open Sitebeheer opnieuw.";
-          toast("Beheerdersrechten ingesteld");
-        } catch (err) { msg.textContent = authError(err); }
-      };
-    }
-  }).catch(err => { content.textContent = authError(err); });
-}
-
-function cartModal() {
-  const root = document.querySelector("#modal-root");
-  const total = cart.reduce((sum, p) => sum + Number(p.price || 0), 0);
-  root.innerHTML = `<div class="overlay"><section class="modal"><button class="close" id="close">×</button><p class="eyebrow">JOUW SELECTIE</p><h2>Winkelwagen</h2>
-    ${cart.length ? cart.map((p, i) => `<div class="cart-line"><span>${safe(p.name)}</span><b>${money(p.price)}</b><button data-remove="${i}">×</button></div>`).join("") : `<p class="muted">Je winkelwagen is nog leeg.</p>`}
-    <div class="cart-total"><span>Totaal</span><strong>${money(total)}</strong></div><p class="muted small">Dit is een demo-webshop; afrekenen en betalingen zijn niet ingeschakeld.</p></section></div>`;
-  root.querySelector("#close").onclick = () => root.innerHTML = "";
-  root.querySelectorAll("[data-remove]").forEach(b => b.onclick = () => { cart.splice(Number(b.dataset.remove), 1); cartModal(); render(); });
-}
-
-function toast(message) {
-  const el = document.createElement("div");
-  el.className = "toast"; el.textContent = message; document.body.append(el);
-  setTimeout(() => el.remove(), 2800);
-}
-function authError(err) {
-  const code = err?.code || "";
-  const map = {
-    "auth/email-already-in-use": "Dit e-mailadres heeft al een account.",
-    "auth/invalid-email": "Dit e-mailadres is ongeldig.",
-    "auth/weak-password": "Kies een wachtwoord van minimaal 6 tekens.",
-    "auth/invalid-credential": "E-mailadres of wachtwoord is onjuist.",
-    "auth/too-many-requests": "Te veel pogingen. Probeer het later opnieuw.",
-    "functions/failed-precondition": "De eerste beheerder is al ingesteld.",
-    "functions/permission-denied": "Geen toegang. Controleer je bootstrap-code."
-  };
-  return map[code] || err?.message || "Er ging iets mis.";
-}
-
-onAuthStateChanged(auth, user => {
-  currentUser = user;
-  if (stopProducts) stopProducts();
-  stopProducts = onValue(query(ref(db, "products"), orderByChild("createdAt")), snapshot => {
-    products = [];
-    snapshot.forEach(child => products.push({ id: child.key, ...child.val() }));
-    products.reverse();
-    render();
-    if (adminMode && document.querySelector("#admin-content")) adminPanel();
-  }, error => {
-    console.error(error);
-    toast("Producten laden is niet gelukt. Controleer de Firebase Database Rules.");
-  });
-});
+function productCard(p){return `<article class="product-card"><div class="product-image">${p.image?`<img src="${safe(p.image)}" alt="${safe(p.name)}" loading="lazy" onerror="this.style.display='none'">`:`<div class="image-placeholder"><span>NOIR</span><b>${safe((p.name||"N").slice(0,1).toUpperCase())}</b></div>`}<span class="product-category">${safe(p.category||"COLLECTIE")}</span><button class="quick-add" data-add="${safe(p.id)}" aria-label="Toevoegen">+</button></div><div class="product-info"><div><h3>${safe(p.name)}</h3><p>${safe(p.description||"Een bijzondere toevoeging aan de collectie.")}</p></div><strong>${money(p.price)}</strong></div></article>`;}
+function accountModal(){const root=document.querySelector("#modal-root");root.innerHTML=`<div class="overlay"><section class="modal"><button class="close" id="close">×</button><p class="eyebrow">YOUR ACCOUNT</p><h2>Welkom terug<span>.</span></h2><p class="muted">Log in op je account of maak eenvoudig een nieuw account aan.</p><div class="auth-tabs"><button class="auth-tab active" data-mode="login">Inloggen</button><button class="auth-tab" data-mode="signup">Account aanmaken</button></div><form id="auth-form"><label id="identity-label">E-mailadres<input id="identity" type="email" required autocomplete="username" placeholder="jij@voorbeeld.nl"></label><label>Wachtwoord<input id="password" type="password" required minlength="10" autocomplete="current-password" placeholder="Minimaal 10 tekens"></label><button class="primary full" id="auth-submit">Inloggen <span>→</span></button><p id="auth-message" class="form-message"></p></form><p class="modal-footnote">Je gegevens worden beveiligd verwerkt.</p></section></div>`;
+ let mode="login";const setMode=m=>{mode=m;root.querySelectorAll(".auth-tab").forEach(b=>b.classList.toggle("active",b.dataset.mode===m));root.querySelector("#identity-label").textContent=m==="login"?"E-mailadres of beheerdersnaam":"E-mailadres";root.querySelector("#identity").type=m==="login"?"text":"email";root.querySelector("#identity").placeholder=m==="login"?"E-mailadres of beheerdersnaam":"jij@voorbeeld.nl";root.querySelector("#auth-submit").innerHTML=(m==="login"?"Inloggen":"Account aanmaken")+" <span>→</span>";root.querySelector("#password").autocomplete=m==="login"?"current-password":"new-password";};
+ root.querySelector("#close").onclick=()=>root.innerHTML="";root.querySelectorAll(".auth-tab").forEach(b=>b.onclick=()=>setMode(b.dataset.mode));root.querySelector("#auth-form").onsubmit=async e=>{e.preventDefault();const msg=root.querySelector("#auth-message");const button=root.querySelector("#auth-submit");button.disabled=true;msg.textContent="Even geduld...";try{const data=await api(mode==="login"?"/login":"/signup",{method:"POST",body:{email:root.querySelector("#identity").value.trim(),username:root.querySelector("#identity").value.trim(),password:root.querySelector("#password").value}});if(mode==="signup"){msg.textContent=data.message;root.querySelector("#password").value="";}else{token=data.token;user=data.user;localStorage.setItem("shop_session",token);root.innerHTML="";render();toast("Welkom bij NOIR.");}}catch(err){msg.textContent=err.message;}finally{button.disabled=false;}};}
+function adminPanel(){const root=document.querySelector("#modal-root");root.innerHTML=`<div class="overlay"><section class="modal admin-modal"><button class="close" id="close">×</button><p class="eyebrow">BACK OFFICE</p><h2>Productbeheer<span>.</span></h2><p class="muted">Beheer de producten in jouw webshop.</p><form id="product-form" class="product-form"><label>Productnaam<input id="p-name" required maxlength="90"></label><label>Prijs in euro<input id="p-price" type="number" min="0" step="0.01" required></label><label>Categorie<input id="p-category" required maxlength="40" placeholder="Bijv. Accessoires"></label><label>Afbeeldings-URL<input id="p-image" type="url" placeholder="https://..."></label><label class="wide">Beschrijving<textarea id="p-description" maxlength="500"></textarea></label><button class="primary wide" type="submit">Product toevoegen <span>→</span></button><p id="admin-message" class="form-message wide"></p></form><h3 class="list-title">Bestaande producten</h3><div class="admin-list">${products.map(p=>`<div><span><b>${safe(p.name)}</b><small>${money(p.price)} · ${safe(p.category)}</small></span><button class="delete-button" data-delete="${safe(p.id)}">Verwijderen</button></div>`).join("")||"<p class='muted'>Nog geen producten toegevoegd.</p>"}</div></section></div>`;root.querySelector("#close").onclick=()=>root.innerHTML="";root.querySelector("#product-form").onsubmit=async e=>{e.preventDefault();const msg=root.querySelector("#admin-message");try{await api("/admin/products",{method:"POST",body:{action:"create",product:{name:root.querySelector("#p-name").value.trim(),price:Number(root.querySelector("#p-price").value),category:root.querySelector("#p-category").value.trim(),image:root.querySelector("#p-image").value.trim(),description:root.querySelector("#p-description").value.trim()}}});await loadProducts();adminPanel();toast("Product toegevoegd.");}catch(err){msg.textContent=err.message;}};root.querySelectorAll("[data-delete]").forEach(b=>b.onclick=async()=>{if(confirm("Weet je zeker dat je dit product wilt verwijderen?")){try{await api(`/admin/products/${encodeURIComponent(b.dataset.delete)}`,{method:"POST",body:{}});await loadProducts();adminPanel();toast("Product verwijderd.");}catch(err){toast(err.message);}}});}
+function cartModal(){const root=document.querySelector("#modal-root");const total=cart.reduce((s,p)=>s+Number(p.price||0),0);root.innerHTML=`<div class="overlay"><section class="modal"><button class="close" id="close">×</button><p class="eyebrow">YOUR SELECTION</p><h2>Winkelwagen<span>.</span></h2>${cart.length?cart.map((p,i)=>`<div class="cart-line"><span>${safe(p.name)}</span><b>${money(p.price)}</b><button data-remove="${i}">×</button></div>`).join(""):`<p class="muted">Je winkelwagen is nog leeg.</p>`}<div class="cart-total"><span>Totaal</span><strong>${money(total)}</strong></div><p class="muted small">Wil je een bestelling plaatsen? Neem contact op met de webshopbeheerder.</p></section></div>`;root.querySelector("#close").onclick=()=>root.innerHTML="";root.querySelectorAll("[data-remove]").forEach(b=>b.onclick=()=>{cart.splice(Number(b.dataset.remove),1);cartModal();render();});}
+function toast(message){const el=document.createElement("div");el.className="toast";el.textContent=message;document.body.append(el);setTimeout(()=>el.remove(),2600);}
+(async()=>{if(token){try{const data=await api("/session");user=data.user;}catch{token="";localStorage.removeItem("shop_session");}}await loadProducts();})();

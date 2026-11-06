@@ -1,70 +1,66 @@
-# Webshop – Firebase + GitHub
+# NOIR webshop
 
-Een responsive Nederlandstalige demo-webshop met Firebase Authentication, Realtime Database en een sitebeheeromgeving. De vormgeving is een eigen ontwerp met een blauwe marketplace-uitstraling; dit is geen officiële bol.com-webshop.
+Professionele donkere webshop met eigen accountregistratie, eigen login en één apart sitebeheeraccount. De frontend kan op GitHub Pages worden gehost; Firebase Realtime Database en Firebase Functions verzorgen de beveiligde backend.
 
-## Wat zit erin?
-- Bezoekers moeten een account aanmaken of inloggen voordat ze de winkel gebruiken.
-- Registratie met e-mailadres en wachtwoord (minimaal 6 tekens).
-- E-mailverificatie bij registratie.
-- Producten worden live uit Firebase Realtime Database geladen.
-- Sitebeheerder kan producten toevoegen en verwijderen.
-- Database-regels staan schrijven alleen toe aan een account met de beveiligde `admin` custom claim.
-- Winkelwagen als demo; geen betaal- of bestelverwerking.
+## Belangrijk: authenticatie
 
-## 1. Firebase voorbereiden
-Dit project is al gekoppeld aan Firebase-project `webshop-3cf70`.
-Controleer in Firebase Console:
-1. Authentication → Sign-in method → **E-mail/wachtwoord** inschakelen.
-2. Authentication → Settings → Authorized domains: voeg je GitHub Pages- of eigen domein toe als je dat gebruikt.
-3. Realtime Database moet actief zijn in `europe-west1`.
+Deze versie gebruikt **geen Firebase Authentication**. Klantaccounts worden in Firebase Realtime Database opgeslagen met per account een scrypt-gehashte wachtwoordwaarde en unieke salt. Inloggen, registreren en productbeheer lopen via Firebase Cloud Functions. De database is voor rechtstreekse browsertoegang volledig gesloten.
 
-De Firebase webconfig staat in `src/firebase.js`. De API-key voor Firebase web-apps is geen servergeheim. Beveiliging komt uit Authentication, database-regels en eventuele App Check.
+## 1. Sitebeheeraccount instellen
 
-## 2. Lokaal starten
-Vereist Node.js 20 of nieuwer en Firebase CLI.
+Open `functions/admin-config.js` en wijzig:
+
+- `username`: de enige beheerdersnaam.
+- `password`: een lang, uniek beheerderswachtwoord.
+- `sessionSecret`: een andere lange, willekeurige geheime sleutel.
+
+Dit bestand staat bewust in `.gitignore`. **Commit of upload dit bestand nooit naar GitHub.** Bewaar een eigen kopie. De voorbeeldversie staat in `functions/admin-config.example.js`.
+
+De beheerlogin is apart van klantregistratie. Klanten kunnen geen beheerdersrol kiezen of een tweede beheeraccount registreren.
+
+## 2. Backend installeren en publiceren
+
+Vereist: Node.js 20+, Firebase CLI en toegang tot het Firebase-project `webshop-3cf70`.
+
+```bash
+npm install
+cd functions
+npm install
+cd ..
+firebase login
+firebase use webshop-3cf70
+firebase deploy --only database,functions
+```
+
+De Functions-code heeft `functions/admin-config.js` nodig. Maak eerst je eigen geheime waarden aan zoals hierboven beschreven. Publiceer de Functions uitsluitend vanuit je eigen vertrouwde computer.
+
+## 3. Frontend lokaal testen
 
 ```bash
 npm install
 npm run dev
 ```
 
-## 3. Firebase CLI en eerste deployment
+## 4. GitHub Pages
+
+De frontend gebruikt Vite. Voor een repository die op `https://GEBRUIKER.github.io/REPOSITORY/` staat, stel je eventueel `base: "/REPOSITORY/"` in `vite.config.js` in (of maak dat bestand aan). Bouw daarna:
+
 ```bash
-npm install -g firebase-tools
-firebase login
-firebase use webshop-3cf70
-npm install --prefix functions
-firebase functions:secrets:set BOOTSTRAP_SECRET
+npm run build
 ```
 
-Kies bij de laatste opdracht een lange, unieke bootstrap-code. Bewaar die veilig; commit deze code nooit naar GitHub.
+Publiceer de inhoud van `dist/` via GitHub Pages. De API blijft op Firebase Functions draaien; GitHub Pages voert zelf geen backendcode uit.
 
-Deploy:
-```bash
-npm run deploy
-```
+## 5. Databasebeveiliging
 
-De eerste deploy van Cloud Functions kan vragen om het Blaze-abonnement (facturering) en om API's in Google Cloud in te schakelen. Controleer eventuele kosten voordat je dit activeert.
+`database.rules.json` blokkeert alle directe lees- en schrijfacties vanuit browsers. De Firebase Admin SDK in Cloud Functions kan de database veilig beheren. Verander deze regels niet naar publieke lees- of schrijfrechten.
 
-## 4. Eerste sitebeheerder instellen
-1. Open de gedeployde webshop.
-2. Maak een account aan met het e-mailadres dat je als beheerder wilt gebruiken.
-3. Klik op de verificatielink in je e-mail.
-4. Log opnieuw in zodat Firebase de verificatiestatus vernieuwt.
-5. Klik op **Sitebeheer**.
-6. Vul de bootstrap-code in die je bij `BOOTSTRAP_SECRET` hebt ingesteld.
-7. De eerste account krijgt een admin custom claim. Log uit en opnieuw in als Sitebeheer niet meteen zichtbaar is.
+## Wat is inbegrepen
 
-De bootstrap-functie accepteert maar één eerste beheerder. Daarna is de code niet opnieuw bruikbaar om extra beheerders aan te maken. Extra beheerders kun je later veilig via Firebase Admin SDK/Console beheren door custom claims toe te kennen.
+- Donkere, schermvullende NOIR-webshopstijl.
+- Productoverzicht, categorieën, zoeken en winkelwagen.
+- Zelf account aanmaken en inloggen.
+- Eén apart sitebeheeraccount dat lokaal in `functions/admin-config.js` wordt ingesteld.
+- Producten toevoegen en verwijderen via beveiligde backendroutes.
 
-## 5. GitHub gebruiken
-Je kunt alle bestanden naar een GitHub-repository uploaden. Voor automatisch deployen kun je Firebase Hosting koppelen aan GitHub via Firebase Console → Hosting → Get started → GitHub. Zet nooit `BOOTSTRAP_SECRET`, service-account JSON of andere servergeheimen in je repository.
-
-**Let op GitHub Pages:** deze app gebruikt Firebase Hosting-configuratie en Cloud Functions. Gebruik bij voorkeur Firebase Hosting. GitHub kan de broncode hosten; Firebase verzorgt de live website, database en functies.
-
-## Beveiliging en productie
-- Stel Firebase App Check in voordat je de site publiek gebruikt.
-- Voeg betaalverwerking, voorraadbeheer, orderverwerking en privacy-/cookie-informatie afzonderlijk toe voordat je echte bestellingen accepteert.
-- Publieke product-read is bewust ingeschakeld; alle productwrites zijn server-side afgedwongen via de admin custom claim.
-- Test de regels met Firebase Rules Playground of Emulator Suite.
-- Pas de e-mailtemplates en domeinen aan in Firebase Console.
+Er is nog geen betaalprovider of verzend-/orderafhandeling gekoppeld. De winkelwagen is dus een productselectie en geen afgeronde betaalcheckout.

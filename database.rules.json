@@ -1,0 +1,25 @@
+{
+  "rules": {
+    ".read": false,
+    ".write": false,
+    "products": {
+      ".read": true,
+      ".indexOn": ["createdAt"],
+      "$productId": {
+        ".write": "auth != null && auth.token.admin === true",
+        ".validate": "newData.hasChildren(['name', 'price', 'category', 'createdAt'])",
+        "name": { ".validate": "newData.isString() && newData.val().length > 0 && newData.val().length <= 90" },
+        "price": { ".validate": "newData.isNumber() && newData.val() >= 0" },
+        "category": { ".validate": "newData.isString() && newData.val().length <= 40" },
+        "description": { ".validate": "newData.isString() && newData.val().length <= 500" },
+        "image": { ".validate": "newData.isString() && newData.val().length <= 2000" },
+        "createdAt": { ".validate": "newData.isNumber()" },
+        "$other": { ".validate": false }
+      }
+    },
+    "_system": {
+      ".read": false,
+      ".write": false
+    }
+  }
+}

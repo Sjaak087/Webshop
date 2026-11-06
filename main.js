@@ -1,4 +1,4 @@
-import "./style.css";
+import ".style.css";
 import { API_URL } from "./firebase.js";
 const appRoot = document.querySelector("#app");
 let products = [], cart = [], user = null, token = localStorage.getItem("shop_session") || "", activeCategory = "Alles", searchTerm = "";
